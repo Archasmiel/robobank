@@ -1,0 +1,1282 @@
+﻿
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\config\DataInitializer.kt ====================
+
+package net.archasmiel.robobank.config
+
+import net.archasmiel.robobank.model.Student
+import net.archasmiel.robobank.model.User
+import net.archasmiel.robobank.model.UserRole
+import net.archasmiel.robobank.repository.StudentRepository
+import net.archasmiel.robobank.repository.UserRepository
+import org.springframework.boot.CommandLineRunner
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.security.crypto.password.PasswordEncoder
+
+@Configuration
+class DataInitializer {
+
+    @Bean
+    fun initData(
+        studentRepository: StudentRepository,
+        userRepository: UserRepository,
+        passwordEncoder: PasswordEncoder
+    ) = CommandLineRunner {
+        // Initialize users
+        if (userRepository.count() == 0L) {
+            val users = listOf(
+                User(
+                    username = "admin",
+                    password = passwordEncoder.encode("admin123"),
+                    email = "admin@school.com",
+                    role = UserRole.ADMIN
+                ),
+                User(
+                    username = "teacher",
+                    password = passwordEncoder.encode("teacher123"),
+                    email = "teacher@school.com",
+                    role = UserRole.TEACHER
+                ),
+                User(
+                    username = "student",
+                    password = passwordEncoder.encode("student123"),
+                    email = "student@school.com",
+                    role = UserRole.STUDENT
+                )
+            )
+
+            userRepository.saveAll(users)
+            println("вњ… Sample users created:")
+            println("   - admin/admin123 (ADMIN)")
+            println("   - teacher/teacher123 (TEACHER)")
+            println("   - student/student123 (STUDENT)")
+        }
+
+        // Initialize students
+        if (studentRepository.count() == 0L) {
+            val students = listOf(
+                Student(name = "Alice Johnson", email = "alice@school.com", balance = 150),
+                Student(name = "Bob Smith", email = "bob@school.com", balance = 200),
+                Student(name = "Charlie Brown", email = "charlie@school.com", balance = 75),
+                Student(name = "Diana Prince", email = "diana@school.com", balance = 300),
+                Student(name = "Ethan Hunt", email = "ethan@school.com", balance = 50)
+            )
+
+            studentRepository.saveAll(students)
+            println("вњ… Sample students created: ${students.size} students")
+        }
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\controller\AuthController.kt ====================
+
+package net.archasmiel.robobank.controller
+
+import jakarta.validation.Valid
+import net.archasmiel.robobank.dto.AuthResponse
+import net.archasmiel.robobank.dto.LoginRequest
+import net.archasmiel.robobank.dto.RefreshTokenRequest
+import net.archasmiel.robobank.dto.RefreshTokenResponse
+import net.archasmiel.robobank.dto.RegisterRequest
+import net.archasmiel.robobank.dto.UserInfoResponse
+import net.archasmiel.robobank.service.AuthService
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.security.core.userdetails.UserDetails
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/auth")
+class AuthController(
+    private val authService: AuthService
+) {
+
+    @PostMapping("/register")
+    fun register(@Valid @RequestBody request: RegisterRequest): ResponseEntity<RefreshTokenResponse> {
+        val response = authService.register(request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(response)
+    }
+
+    @PostMapping("/login")
+    fun login(@Valid @RequestBody request: LoginRequest): ResponseEntity<RefreshTokenResponse> {
+        val response = authService.login(request)
+        return ResponseEntity.ok(response)
+    }
+
+    @PostMapping("/refresh")
+    fun refreshToken(@Valid @RequestBody request: RefreshTokenRequest): ResponseEntity<RefreshTokenResponse> {
+        val response = authService.refreshToken(request)
+        return ResponseEntity.ok(response)
+    }
+
+    @PostMapping("/logout")
+    fun logout(@AuthenticationPrincipal userDetails: UserDetails): ResponseEntity<Map<String, String>> {
+        authService.logout(userDetails.username)
+        return ResponseEntity.ok(mapOf("message" to "Logged out successfully"))
+    }
+
+    @GetMapping("/me")
+    fun getCurrentUser(@AuthenticationPrincipal userDetails: UserDetails): ResponseEntity<UserInfoResponse> {
+        val userInfo = authService.getCurrentUserInfo(userDetails.username)
+        return ResponseEntity.ok(userInfo)
+    }
+
+    @GetMapping("/test")
+    fun test(): ResponseEntity<String> {
+        return ResponseEntity.ok("If you see this, endpoint works")
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\controller\GlobalExceptionHandler.kt ====================
+
+package net.archasmiel.robobank.controller
+
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.annotation.ExceptionHandler
+import org.springframework.web.bind.annotation.RestControllerAdvice
+import java.time.LocalDateTime
+
+data class ErrorResponse(
+    val timestamp: LocalDateTime = LocalDateTime.now(),
+    val status: Int,
+    val error: String,
+    val message: String,
+    val details: List<String>? = null
+)
+
+@RestControllerAdvice
+class GlobalExceptionHandler {
+
+    @ExceptionHandler(NoSuchElementException::class)
+    fun handleNotFound(ex: NoSuchElementException): ResponseEntity<ErrorResponse> {
+        val error = ErrorResponse(
+            status = HttpStatus.NOT_FOUND.value(),
+            error = "Not Found",
+            message = ex.message ?: "Message missing"
+        )
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error)
+    }
+
+    @ExceptionHandler(IllegalArgumentException::class)
+    fun handleBadRequest(ex: IllegalArgumentException): ResponseEntity<ErrorResponse> {
+        val error = ErrorResponse(
+            status = HttpStatus.BAD_REQUEST.value(),
+            error = "Bad Request",
+            message = ex.message ?: "Message missing"
+        )
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error)
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException::class)
+    fun handleValidationErrors(ex: MethodArgumentNotValidException): ResponseEntity<ErrorResponse> {
+        val details = ex.bindingResult.fieldErrors.map {
+            "${it.field}: ${it.defaultMessage}"
+        }
+
+        val error = ErrorResponse(
+            status = HttpStatus.BAD_REQUEST.value(),
+            error = "Validation failed",
+            message = "Invalid input data",
+            details = details
+        )
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error)
+    }
+
+    @ExceptionHandler(Exception::class)
+    fun handleGenericExceptions(ex: Exception): ResponseEntity<ErrorResponse> {
+        val error = ErrorResponse(
+            status = HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            error = "Internal server error",
+            message = ex.message ?: "Unexpected error"
+        )
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error)
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\controller\StudentController.kt ====================
+
+package net.archasmiel.robobank.controller
+
+import jakarta.validation.Valid
+import net.archasmiel.robobank.dto.CreateStudentRequest
+import net.archasmiel.robobank.dto.StudentResponse
+import net.archasmiel.robobank.service.StudentService
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/students")
+class StudentController(
+    private val studentService: StudentService
+) {
+
+    @PostMapping
+    fun createStudent(@Valid @RequestBody request: CreateStudentRequest): ResponseEntity<StudentResponse> {
+        val student = studentService.createStudent(request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(student)
+    }
+
+    @GetMapping("/{id}")
+    fun getStudent(@PathVariable id: Long): ResponseEntity<StudentResponse> {
+        val student = studentService.getStudentById(id)
+        return ResponseEntity.ok(student)
+    }
+
+    @GetMapping("/email/{email}")
+    fun getStudentByEmail(@PathVariable email: String): ResponseEntity<StudentResponse> {
+        val student = studentService.getStudentByEmail(email)
+        return ResponseEntity.ok(student)
+    }
+
+    @GetMapping
+    fun getAllStudents(): ResponseEntity<List<StudentResponse>> {
+        val students = studentService.getAllStudents()
+        return ResponseEntity.ok(students)
+    }
+
+    @GetMapping("/leaderboard")
+    fun getLeaderboard(): ResponseEntity<List<StudentResponse>> {
+        val students = studentService.getLeaderboard()
+        return ResponseEntity.ok(students)
+    }
+
+    @DeleteMapping("/{id}")
+    fun deleteStudent(@PathVariable id: Long): ResponseEntity<Long> {
+        studentService.deleteStudent(id)
+        return ResponseEntity.noContent().build()
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\controller\TransactionController.kt ====================
+
+package net.archasmiel.robobank.controller
+
+import jakarta.validation.Valid
+import net.archasmiel.robobank.dto.AdjustPointsRequest
+import net.archasmiel.robobank.dto.TransactionResponse
+import net.archasmiel.robobank.service.TransactionService
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/transactions")
+class TransactionController(
+    private val transactionService: TransactionService
+) {
+
+    @PostMapping("/award/{studentId}")
+    fun awardPoints(
+        @PathVariable studentId: Long,
+        @Valid @RequestBody request: AdjustPointsRequest
+    ): ResponseEntity<TransactionResponse> {
+        val transaction = transactionService.awardPoints(studentId, request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(transaction)
+    }
+
+    @PostMapping("/spend/{studentId}")
+    fun spendPoints(
+        @PathVariable studentId: Long,
+        @Valid @RequestBody request: AdjustPointsRequest
+    ): ResponseEntity<TransactionResponse> {
+        val transaction = transactionService.spendPoints(studentId, request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(transaction)
+    }
+
+    @PostMapping("/adjust/{studentId}")
+    fun adjustPoints(
+        @PathVariable studentId: Long,
+        @Valid @RequestBody request: AdjustPointsRequest
+    ): ResponseEntity<TransactionResponse> {
+        val transaction = transactionService.adjustPoints(studentId, request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(transaction)
+    }
+
+    @GetMapping("/student/{studentId}")
+    fun getStudentTransactions(
+        @PathVariable studentId: Long
+    ): ResponseEntity<List<TransactionResponse>> {
+        val transactions = transactionService.getStudentTransactions(studentId)
+        return ResponseEntity.ok(transactions)
+    }
+
+    @GetMapping("/leaderboard")
+    fun getTop20Transactions(): ResponseEntity<List<TransactionResponse>> {
+        val transactions = transactionService.getTop20Transactions()
+        return ResponseEntity.ok(transactions)
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\dto\AuthDto.kt ====================
+
+package net.archasmiel.robobank.dto
+
+import jakarta.validation.constraints.*
+import net.archasmiel.robobank.model.UserRole
+import java.time.LocalDateTime
+
+data class RegisterRequest(
+    @field:NotBlank(message = "Username is required")
+    @field:Size(min = 3, max = 50, message = "Username must be between 3 and 50 characters")
+    val username: String,
+
+    @field:NotBlank(message = "Password is required")
+    @field:Size(min = 6, message = "Password must be at least 6 characters")
+    val password: String,
+
+    @field:Email(message = "Invalid email format")
+    @field:NotBlank(message = "Email is required")
+    val email: String,
+
+    val role: UserRole = UserRole.STUDENT
+)
+
+data class LoginRequest(
+    @field:NotBlank(message = "Username is required")
+    val username: String,
+
+    @field:NotBlank(message = "Password is required")
+    val password: String
+)
+
+data class RefreshTokenRequest(
+    @field:NotBlank(message = "Refresh token is required")
+    val refreshToken: String
+)
+
+data class AuthResponse(
+    val token: String,
+    val type: String = "Bearer",
+    val username: String,
+    val email: String,
+    val role: UserRole
+)
+
+data class UserInfoResponse(
+    val id: Long,
+    val username: String,
+    val email: String,
+    val role: UserRole,
+    val createdAt: LocalDateTime
+)
+
+data class RefreshTokenResponse(
+    val accessToken: String,
+    val refreshToken: String,
+    val type: String = "Bearer"
+)
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\dto\StudentDto.kt ====================
+
+package net.archasmiel.robobank.dto
+
+import jakarta.validation.constraints.Email
+import jakarta.validation.constraints.NotBlank
+import java.time.LocalDateTime
+
+data class CreateStudentRequest(
+    @field:NotBlank(message = "Name is required")
+    val name: String,
+
+    @field:Email(message = "Invalid email format")
+    @field:NotBlank(message = "Email is required")
+    val email: String
+)
+
+data class StudentResponse(
+    val id: Long,
+    val name: String,
+    val email: String,
+    val balance: Int,
+    val createdAt: LocalDateTime
+)
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\dto\TransactionDto.kt ====================
+
+package net.archasmiel.robobank.dto
+
+import jakarta.validation.constraints.NotBlank
+import net.archasmiel.robobank.model.TransactionType
+import java.time.LocalDateTime
+
+data class AdjustPointsRequest(
+    val amount: Int,
+
+    @field:NotBlank(message = "Description is required")
+    val description: String
+)
+
+data class TransactionResponse(
+    val id: Long,
+    val studentId: Long,
+    val studentName: String,
+    val amount: Int,
+    val type: TransactionType,
+    val description: String,
+    val createdAt: LocalDateTime
+)
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\model\RefreshToken.kt ====================
+
+package net.archasmiel.robobank.model
+
+import jakarta.persistence.*
+import java.time.LocalDateTime
+
+@Entity
+@Table(name = "refresh_tokens")
+data class RefreshToken(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    val id: Long? = null,
+
+    @Column(nullable = false, unique = true)
+    val token: String,
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    val user: User,
+
+    @Column(nullable = false)
+    val expiryDate: LocalDateTime,
+
+    @Column(nullable = false)
+    val createdAt: LocalDateTime = LocalDateTime.now()
+)
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\model\Student.kt ====================
+
+package net.archasmiel.robobank.model
+
+import jakarta.persistence.*
+import net.archasmiel.robobank.dto.StudentResponse
+import java.time.LocalDateTime
+
+@Entity
+@Table(name = "students")
+data class Student(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    val id: Long? = null,
+
+    @Column(nullable = false, unique = true)
+    val email: String,
+
+    @Column(nullable = false)
+    val name: String,
+
+    @Column(nullable = false)
+    val balance: Int = 0,
+
+    @Column(nullable = false)
+    val createdAt: LocalDateTime = LocalDateTime.now()
+)
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\model\Transaction.kt ====================
+
+package net.archasmiel.robobank.model
+
+import jakarta.persistence.*
+import net.archasmiel.robobank.dto.StudentResponse
+import net.archasmiel.robobank.dto.TransactionResponse
+import java.time.LocalDateTime
+
+@Entity
+@Table(name = "transactions")
+data class Transaction(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    val id: Long? = null,
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "student_id", nullable = false)
+    val student: Student,
+
+    @Column(nullable = false)
+    val amount: Int,   // + = add, - = subtract
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    val type: TransactionType,
+
+    @Column(nullable = false)
+    val description: String,
+
+    @Column(nullable = false)
+    val createdAt: LocalDateTime = LocalDateTime.now()
+)
+
+enum class TransactionType {
+    AWARDED,
+    SPENT,
+    ADJUSTED
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\model\User.kt ====================
+
+package net.archasmiel.robobank.model
+
+import jakarta.persistence.*
+import org.springframework.security.core.GrantedAuthority
+import org.springframework.security.core.authority.SimpleGrantedAuthority
+import org.springframework.security.core.userdetails.UserDetails
+import java.time.LocalDateTime
+
+@Entity
+@Table(name = "users")
+data class User(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    val id: Long? = null,
+
+    @Column(nullable = false, unique = true)
+    private val username: String,
+
+    @Column(nullable = false)
+    private val password: String,
+
+    @Column(nullable = false)
+    val email: String,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    val role: UserRole = UserRole.STUDENT,
+
+    @Column(nullable = false)
+    val createdAt: LocalDateTime = LocalDateTime.now(),
+
+    @Column(nullable = false)
+    private val enabled: Boolean = true,
+
+    @Column(nullable = false)
+    private val accountNonExpired: Boolean = true,
+
+    @Column(nullable = false)
+    private val accountNonLocked: Boolean = true,
+
+    @Column(nullable = false)
+    private val credentialsNonExpired: Boolean = true,
+) : UserDetails {
+    override fun getAuthorities(): Collection<GrantedAuthority> {
+        return listOf(SimpleGrantedAuthority("ROLE_${role.name}"))
+    }
+
+    override fun getPassword(): String = password
+
+    override fun getUsername(): String = username
+
+    override fun isAccountNonExpired(): Boolean = accountNonExpired
+
+    override fun isAccountNonLocked(): Boolean = accountNonLocked
+
+    override fun isCredentialsNonExpired(): Boolean = credentialsNonExpired
+
+    override fun isEnabled(): Boolean = enabled
+}
+
+enum class UserRole {
+    STUDENT,
+    TEACHER,
+    ADMIN
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\repository\RefreshTokenRepository.kt ====================
+
+package net.archasmiel.robobank.repository
+
+import net.archasmiel.robobank.model.RefreshToken
+import net.archasmiel.robobank.model.User
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
+import java.util.*
+
+@Repository
+interface RefreshTokenRepository : JpaRepository<RefreshToken, Long> {
+    fun findByToken(token: String): Optional<RefreshToken>
+    fun deleteByUser(user: User)
+    fun deleteByExpiryDateBefore(now: LocalDateTime): Int
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\repository\StudentRepository.kt ====================
+
+package net.archasmiel.robobank.repository
+
+import net.archasmiel.robobank.model.Student
+import org.springframework.data.jpa.repository.JpaRepository
+import java.util.Optional
+
+interface StudentRepository : JpaRepository<Student, Long> {
+    fun findByEmail(email: String): Optional<Student>
+    fun existsByEmail(email: String): Boolean
+
+    // for leaderboard
+    fun findTop10ByOrderByBalanceDesc(): List<Student>
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\repository\TransactionRepository.kt ====================
+
+package net.archasmiel.robobank.repository
+
+import net.archasmiel.robobank.model.Student
+import net.archasmiel.robobank.model.Transaction
+import org.springframework.data.jpa.repository.JpaRepository
+
+interface TransactionRepository : JpaRepository<Transaction, Long> {
+    // get all transactions for specific student
+    fun findByStudentOrderByCreatedAtDesc(student: Student): List<Transaction>
+
+    // top-20 for activity feed
+    fun findTop20ByOrderByCreatedAtDesc(): List<Transaction>
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\repository\UserRepository.kt ====================
+
+package net.archasmiel.robobank.repository
+
+import net.archasmiel.robobank.model.User
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Repository
+import java.util.Optional
+
+@Repository
+interface UserRepository : JpaRepository<User, Long> {
+    fun findByUsername(username: String): Optional<User>
+    fun existsByUsername(username: String): Boolean
+    fun existsByEmail(email: String): Boolean
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\security\CustomUserDetailsService.kt ====================
+
+package net.archasmiel.robobank.security
+
+import net.archasmiel.robobank.repository.UserRepository
+import org.springframework.security.core.userdetails.UserDetails
+import org.springframework.security.core.userdetails.UserDetailsService
+import org.springframework.security.core.userdetails.UsernameNotFoundException
+import org.springframework.stereotype.Service
+
+@Service
+class CustomUserDetailsService(
+    private val userRepository: UserRepository
+): UserDetailsService {
+
+    override fun loadUserByUsername(username: String): UserDetails {
+        return userRepository.findByUsername(username)
+            .orElseThrow { UsernameNotFoundException("User not found with username: $username") }
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\security\JwtAuthFilter.kt ====================
+
+package net.archasmiel.robobank.security
+
+import jakarta.servlet.FilterChain
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.core.context.SecurityContextHolder
+import org.springframework.security.core.userdetails.UserDetailsService
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource
+import org.springframework.stereotype.Component
+import org.springframework.web.filter.OncePerRequestFilter
+
+@Component
+class JwtAuthFilter(
+    private val jwtUtility: JwtUtility,
+    private val userDetailsService: UserDetailsService
+) : OncePerRequestFilter() {
+
+    override fun doFilterInternal(
+        request: HttpServletRequest,
+        response: HttpServletResponse,
+        filterChain: FilterChain
+    ) {
+        val authHeader = request.getHeader("Bearer")
+
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            filterChain.doFilter(request, response)
+            return
+        }
+
+        try {
+            val jwt = authHeader.substring(7)
+            val username = jwtUtility.extractUsername(jwt)
+
+            if (SecurityContextHolder.getContext().authentication == null) {
+                val userDetails = userDetailsService.loadUserByUsername(username)
+
+                if (jwtUtility.validateToken(jwt, userDetails)) {
+                    val authToken = UsernamePasswordAuthenticationToken(
+                        userDetails,
+                        null,
+                        userDetails.authorities
+                    )
+                    authToken.details = WebAuthenticationDetailsSource().buildDetails(request)
+                    SecurityContextHolder.getContext().authentication = authToken
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Cannot set user authentication: ${e.message}")
+        }
+
+        filterChain.doFilter(request, response)
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\security\JwtUtility.kt ====================
+
+package net.archasmiel.robobank.security
+
+import io.jsonwebtoken.Claims
+import io.jsonwebtoken.Jwts
+import io.jsonwebtoken.security.Keys
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.security.core.userdetails.UserDetails
+import org.springframework.stereotype.Component
+import java.util.Date
+import javax.crypto.SecretKey
+
+@Component
+class JwtUtility {
+
+    @Value("\${jwt.secret:mySecretKeyForJWTTokenGenerationThatIsAtLeast256BitsLong12345678}")
+    private lateinit var secret: String
+
+    @Value("\${jwt.expiration:86400000}") // 24 hours in milliseconds
+    private var expiration: Long = 86400000
+
+    private fun getSigningKey(): SecretKey {
+        return Keys.hmacShaKeyFor(secret.toByteArray())
+    }
+
+    fun generateToken(userDetails: UserDetails): String {
+        val claims = mutableMapOf<String, Any>()
+        return createToken(claims, userDetails.username)
+    }
+
+    private fun createToken(claims: Map<String, Any>, subject: String): String {
+        val now = Date()
+        val expireDate = Date(now.time + expiration)
+
+        return Jwts.builder()
+            .claims(claims)
+            .subject(subject)
+            .issuedAt(now)
+            .expiration(expireDate)
+            .signWith(getSigningKey())
+            .compact()
+    }
+
+    fun extractUsername(token: String): String {
+        return extractClaim(token, Claims::getSubject)
+    }
+
+    fun extractExpiration(token: String): Date {
+        return extractClaim(token, Claims::getExpiration)
+    }
+
+    fun <T> extractClaim(token: String, claimsResolver: (Claims) -> T): T {
+        val claims = extractAllClaims(token)
+        return claimsResolver(claims)
+    }
+
+    private fun extractAllClaims(token: String): Claims {
+        return Jwts.parser()
+            .verifyWith(getSigningKey())
+            .build()
+            .parseSignedClaims(token)
+            .payload
+    }
+
+    private fun isTokenExpired(token: String): Boolean {
+        return extractExpiration(token).before(Date())
+    }
+
+    fun validateToken(token: String, userDetails: UserDetails): Boolean {
+        val username = extractUsername(token)
+        return (username == userDetails.username && !isTokenExpired(token))
+    }
+
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\security\SecurityConfig.kt ====================
+
+package net.archasmiel.robobank.security
+
+import net.archasmiel.robobank.model.UserRole
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.security.authentication.AuthenticationManager
+import org.springframework.security.authentication.AuthenticationProvider
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
+import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+import org.springframework.security.config.http.SessionCreationPolicy
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
+import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+class SecurityConfig(
+    private val jwtAuthFilter: JwtAuthFilter,
+    private val userDetailsService: CustomUserDetailsService
+) {
+
+    @Bean
+    fun passwordEncoder(): PasswordEncoder {
+        return BCryptPasswordEncoder()
+    }
+
+    @Bean
+    fun authenticationProvider(): AuthenticationProvider {
+        val authProvider = DaoAuthenticationProvider()
+        authProvider.setUserDetailsService(userDetailsService)
+        authProvider.setPasswordEncoder(passwordEncoder())
+        return authProvider
+    }
+
+    @Bean
+    fun authenticationManager(config: AuthenticationConfiguration): AuthenticationManager {
+        return config.authenticationManager
+    }
+
+    @Bean
+    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+        http
+            .csrf { it.disable() }
+            .authorizeHttpRequests { auth ->
+                auth
+                    .requestMatchers("/api/auth/**").permitAll()
+                    .requestMatchers("/h2-console/**").permitAll()
+                    .requestMatchers("/error").permitAll()
+                    .requestMatchers("/api/students/**").hasAnyRole("STUDENT", "TEACHER", "ADMIN")
+                    .requestMatchers("/api/transactions/award/**").hasAnyRole("TEACHER", "ADMIN")
+                    .requestMatchers("/api/transactions/adjust/**").hasAnyRole("ADMIN")
+                    .requestMatchers("/api/transactions/spend/**").hasAnyRole("STUDENT", "TEACHER", "ADMIN")
+                    .requestMatchers("/api/transactions/**").hasAnyRole("STUDENT", "TEACHER", "ADMIN")
+                    .anyRequest().authenticated()
+            }
+            .sessionManagement { session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            }
+            .authenticationProvider(authenticationProvider())
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter::class.java)
+            .headers { headers ->
+                headers.frameOptions { it.sameOrigin() }
+            }
+        return http.build()
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\service\AuthService.kt ====================
+
+package net.archasmiel.robobank.service
+
+import jakarta.transaction.Transactional
+import net.archasmiel.robobank.dto.AuthResponse
+import net.archasmiel.robobank.dto.LoginRequest
+import net.archasmiel.robobank.dto.RefreshTokenRequest
+import net.archasmiel.robobank.dto.RefreshTokenResponse
+import net.archasmiel.robobank.dto.RegisterRequest
+import net.archasmiel.robobank.dto.UserInfoResponse
+import net.archasmiel.robobank.model.User
+import net.archasmiel.robobank.repository.UserRepository
+import net.archasmiel.robobank.security.JwtUtility
+import org.springframework.security.authentication.AuthenticationManager
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.stereotype.Service
+
+@Service
+class AuthService(
+    private val userRepository: UserRepository,
+    private val passwordEncoder: PasswordEncoder,
+    private val jwtUtility: JwtUtility,
+    private val authenticationManager: AuthenticationManager,
+    private val refreshTokenService: RefreshTokenService
+) {
+
+    @Transactional
+    fun register(request: RegisterRequest): RefreshTokenResponse {
+        if (userRepository.existsByUsername(request.username)) {
+            throw IllegalArgumentException("Username already exists")
+        }
+
+        if (userRepository.existsByEmail(request.email)) {
+            throw IllegalArgumentException("Email already exists")
+        }
+
+        val user = User(
+            username = request.username,
+            password = passwordEncoder.encode(request.password),
+            email = request.email,
+            role = request.role
+        )
+
+        val savedUser = userRepository.save(user)
+        val accessToken = jwtUtility.generateToken(savedUser)
+        val refreshToken = refreshTokenService.createRefreshToken(savedUser)
+
+        return RefreshTokenResponse(
+            accessToken = accessToken,
+            refreshToken = refreshToken.token
+        )
+    }
+
+    fun login(request: LoginRequest): RefreshTokenResponse {
+        authenticationManager.authenticate(
+            UsernamePasswordAuthenticationToken(
+                request.username,
+                request.password
+            )
+        )
+
+        val user = userRepository.findByUsername(request.username)
+            .orElseThrow { IllegalArgumentException("Invalid username or password") }
+
+        val accessToken = jwtUtility.generateToken(user)
+        val refreshToken = refreshTokenService.createRefreshToken(user)
+
+        return RefreshTokenResponse(
+            accessToken = accessToken,
+            refreshToken = refreshToken.token
+        )
+    }
+
+    @Transactional
+    fun refreshToken(request: RefreshTokenRequest): RefreshTokenResponse {
+        val refreshToken = refreshTokenService.findByToken(request.refreshToken)
+
+        refreshTokenService.verifyExpiration(refreshToken)
+
+        val user = refreshToken.user
+        val newAccessToken = jwtUtility.generateToken(user)
+
+        val newRefreshToken = refreshTokenService.createRefreshToken(user)
+
+        return RefreshTokenResponse(
+            accessToken = newAccessToken,
+            refreshToken = newRefreshToken.token
+        )
+    }
+
+    @Transactional
+    fun logout(username: String) {
+        val user = userRepository.findByUsername(username)
+            .orElseThrow { NoSuchElementException("User not found") }
+
+        refreshTokenService.deleteByUser(user)
+    }
+
+    fun getCurrentUserInfo(username: String): UserInfoResponse {
+        val user = userRepository.findByUsername(username)
+            .orElseThrow { NoSuchElementException("User not found") }
+
+        return UserInfoResponse(
+            id = user.id!!,
+            username = user.username,
+            email = user.email,
+            role = user.role,
+            createdAt = user.createdAt
+        )
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\service\RefreshTokenService.kt ====================
+
+package net.archasmiel.robobank.service
+
+import jakarta.transaction.Transactional
+import net.archasmiel.robobank.model.RefreshToken
+import net.archasmiel.robobank.model.User
+import net.archasmiel.robobank.repository.RefreshTokenRepository
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Service
+import java.time.LocalDateTime
+import java.util.UUID
+
+@Service
+class RefreshTokenService(
+    private val refreshTokenRepository: RefreshTokenRepository
+) {
+
+    @Value("\${jwt.refresh-expiration:604800000}") // 7 days in milliseconds
+    private var refreshTokenDurationMs: Long = 604800000
+
+    @Transactional
+    fun createRefreshToken(user: User): RefreshToken {
+        // Delete existing refresh tokens for this user
+        refreshTokenRepository.deleteByUser(user)
+
+        val refreshToken = RefreshToken(
+            token = UUID.randomUUID().toString(),
+            user = user,
+            expiryDate = LocalDateTime.now().plusSeconds(refreshTokenDurationMs / 1000)
+        )
+
+        return refreshTokenRepository.save(refreshToken)
+    }
+
+    fun findByToken(token: String): RefreshToken {
+        return refreshTokenRepository.findByToken(token)
+            .orElseThrow { IllegalArgumentException("Refresh token not found") }
+    }
+
+    fun verifyExpiration(token: RefreshToken): RefreshToken {
+        if (token.expiryDate.isBefore(LocalDateTime.now())) {
+            refreshTokenRepository.delete(token)
+            throw IllegalArgumentException("Refresh token expired. Please login again")
+        }
+        return token
+    }
+
+    @Transactional
+    fun deleteByUser(user: User) {
+        refreshTokenRepository.deleteByUser(user)
+    }
+
+    @Transactional
+    fun deleteExpiredTokens(): Int {
+        return refreshTokenRepository.deleteByExpiryDateBefore(LocalDateTime.now())
+    }
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\service\StudentService.kt ====================
+
+package net.archasmiel.robobank.service
+
+import jakarta.transaction.Transactional
+import net.archasmiel.robobank.dto.CreateStudentRequest
+import net.archasmiel.robobank.dto.StudentResponse
+import net.archasmiel.robobank.model.Student
+import net.archasmiel.robobank.repository.StudentRepository
+import org.springframework.stereotype.Service
+
+@Service
+class StudentService(
+    private val studentRepository: StudentRepository
+) {
+
+    @Transactional
+    fun createStudent(request: CreateStudentRequest): StudentResponse {
+        if (studentRepository.existsByEmail(request.email)) {
+            throw IllegalArgumentException("Student with email ${request.email} already exists")
+        }
+
+        val student = Student(
+            name = request.name,
+            email = request.email,
+            balance = 0
+        )
+
+        val saved = studentRepository.save(student)
+        return saved.toResponse()
+    }
+
+    fun getStudentById(id: Long): StudentResponse {
+        val student = studentRepository.findById(id)
+            .orElseThrow {
+                NoSuchElementException("Student with id $id not found")
+            }
+        return student.toResponse()
+    }
+
+    fun getStudentByEmail(email: String): StudentResponse {
+        val student = studentRepository.findByEmail(email)
+            .orElseThrow {
+                NoSuchElementException("Student with email $email not found")
+            }
+        return student.toResponse()
+    }
+
+    fun getAllStudents(): List<StudentResponse> {
+        return studentRepository.findAll().map { it.toResponse() }
+    }
+
+    fun getLeaderboard(): List<StudentResponse> {
+        return studentRepository.findTop10ByOrderByBalanceDesc()
+            .map { it.toResponse() }
+    }
+
+    @Transactional
+    fun deleteStudent(id: Long) {
+        if (!studentRepository.existsById(id)) {
+            throw NoSuchElementException("Student with $id not found")
+        }
+        studentRepository.deleteById(id)
+    }
+
+    fun Student.toResponse() = StudentResponse(
+        id = id!!,
+        name = name,
+        email = email,
+        balance = balance,
+        createdAt = createdAt
+    )
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\service\TransactionService.kt ====================
+
+package net.archasmiel.robobank.service
+
+import jakarta.transaction.Transactional
+import net.archasmiel.robobank.dto.AdjustPointsRequest
+import net.archasmiel.robobank.dto.TransactionResponse
+import net.archasmiel.robobank.model.Transaction
+import net.archasmiel.robobank.model.TransactionType
+import net.archasmiel.robobank.repository.StudentRepository
+import net.archasmiel.robobank.repository.TransactionRepository
+import org.springframework.stereotype.Service
+
+@Service
+class TransactionService(
+    private val transactionRepository: TransactionRepository,
+    private val studentRepository: StudentRepository
+) {
+
+    @Transactional
+    fun awardPoints(studentId: Long, request: AdjustPointsRequest): TransactionResponse {
+        val student = studentRepository.findById(studentId)
+            .orElseThrow { NoSuchElementException("Student with id $studentId not found") }
+
+        if (request.amount <= 0) {
+            throw IllegalArgumentException("Request amount must be positive for award")
+        }
+
+        val transaction = Transaction(
+            student = student,
+            amount = request.amount,
+            type = TransactionType.AWARDED,
+            description = request.description
+        )
+
+        val updatedStudent = student.copy(balance = student.balance + request.amount)
+        studentRepository.save(updatedStudent)
+
+        val savedTransaction = transactionRepository.save(transaction)
+        return savedTransaction.toResponse()
+    }
+
+    @Transactional
+    fun spendPoints(studentId: Long, request: AdjustPointsRequest): TransactionResponse {
+        val student = studentRepository.findById(studentId)
+            .orElseThrow { NoSuchElementException("Student with id $studentId not found") }
+
+        if (request.amount <= 0) {
+            throw IllegalArgumentException("Request amount must be positive for spend")
+        }
+
+        if (student.balance < request.amount) {
+            throw IllegalArgumentException("Insufficient balance. Current: ${student.balance}. Needed: ${request.amount}")
+        }
+
+        val transaction = Transaction(
+            student = student,
+            amount = request.amount,
+            type = TransactionType.SPENT,
+            description = request.description
+        )
+
+        val updatedStudent = student.copy(balance = student.balance - request.amount)
+        studentRepository.save(updatedStudent)
+
+        val savedTransaction = transactionRepository.save(transaction)
+        return savedTransaction.toResponse()
+    }
+
+    @Transactional
+    fun adjustPoints(studentId: Long, request: AdjustPointsRequest): TransactionResponse {
+        val student = studentRepository.findById(studentId)
+            .orElseThrow { NoSuchElementException("Student with id $studentId not found") }
+
+        if (request.amount == 0) {
+            throw IllegalArgumentException("Expensive call for zero adjust")
+        }
+
+        val transaction = Transaction(
+            student = student,
+            amount = request.amount,
+            type = TransactionType.SPENT,
+            description = request.description
+        )
+
+        val updatedStudent = student.copy(balance = student.balance + request.amount)
+        studentRepository.save(updatedStudent)
+
+        val savedTransaction = transactionRepository.save(transaction)
+        return savedTransaction.toResponse()
+    }
+
+    fun getStudentTransactions(studentId: Long): List<TransactionResponse> {
+        val student = studentRepository.findById(studentId)
+            .orElseThrow { NoSuchElementException("Student with id $studentId not found") }
+
+        return transactionRepository.findByStudentOrderByCreatedAtDesc(student)
+            .map { it.toResponse() }
+    }
+
+    fun getTop20Transactions(): List<TransactionResponse> {
+        return transactionRepository.findTop20ByOrderByCreatedAtDesc()
+            .map { it.toResponse() }
+    }
+
+    fun Transaction.toResponse() = TransactionResponse(
+        id = id!!,
+        studentId = student.id!!,
+        studentName = student.name,
+        amount = amount,
+        type = type,
+        description = description,
+        createdAt = createdAt
+    )
+}
+
+
+==================== C:\Users\Сергій\Desktop\robobank\src\main\kotlin\net\archasmiel\robobank\RobobankApplication.kt ====================
+
+package net.archasmiel.robobank
+
+import org.springframework.boot.autoconfigure.SpringBootApplication
+import org.springframework.boot.runApplication
+
+@SpringBootApplication
+class RobobankApplication
+
+fun main(args: Array<String>) {
+	runApplication<RobobankApplication>(*args)
+}
